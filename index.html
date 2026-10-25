@@ -165,7 +165,7 @@ footer a, .method a { color: var(--accent); }
   <header class="top">
     <div>
       <h1>Kryptosentiment</h1>
-      <p>Fear &amp; Greed för hela marknaden och ett eget beräknat index för varje mynt. Uppdateras automatiskt var femte minut.</p>
+      <p>Fear &amp; Greed för hela marknaden och ett eget beräknat index för varje kryptovaluta som går att köpa som certifikat på Avanza. Uppdateras automatiskt var femte minut.</p>
     </div>
     <div class="status">
       <span id="updated">Laddar…</span>
@@ -206,10 +206,6 @@ footer a, .method a { color: var(--accent); }
       <option value="3">Girighet</option>
       <option value="4">Extrem girighet</option>
     </select>
-    <select id="count" aria-label="Antal mynt">
-      <option value="100">Topp 100</option>
-      <option value="250">Topp 250</option>
-    </select>
     <select id="cur" aria-label="Valuta">
       <option value="sek">SEK</option>
       <option value="usd">USD</option>
@@ -249,7 +245,7 @@ footer a, .method a { color: var(--accent); }
       <li><b>Volym (10 %)</b>: handelsvolym i förhållande till börsvärde. Hög volym förstärker dagens riktning.</li>
       <li><b>Styrka mot Bitcoin (10 %)</b>: 7-dagarsutveckling jämfört med BTC.</li>
     </ul>
-    <p>Gränser: 0–24 extrem rädsla, 25–44 rädsla, 45–55 neutral, 56–75 girighet, 76–100 extrem girighet. Stablecoins visas inte. Varje mätning sparas i din webbläsare så att du kan följa hur myntens index förändras över tid. Indexet är ett sentimentmått och inte ett köp- eller säljråd.</p>
+    <p>Gränser: 0–24 extrem rädsla, 25–44 rädsla, 45–55 neutral, 56–75 girighet, 76–100 extrem girighet. Listan innehåller bara kryptovalutor som har minst ett certifikat eller en ETP på Avanza, enligt Avanzas certifikatlista <span id="avz-date"></span>. Kryptoindex, stETH, Tether Gold och Story (IP) är inte med. Utbudet ändras ibland, så kontrollera alltid hos Avanza innan du köper. Varje mätning sparas i din webbläsare så att du kan följa hur myntens index förändras över tid. Indexet är ett sentimentmått och inte ett köp- eller säljråd.</p>
   </section>
 
   <footer>Data: <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a> och <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank" rel="noopener">alternative.me</a>. Historiken lagras lokalt i den här webbläsaren.</footer>
@@ -281,7 +277,32 @@ footer a, .method a { color: var(--accent); }
 const CG = "https://api.coingecko.com/api/v3";
 const FNG = "https://api.alternative.me/fng/?limit=60";
 const REFRESH_MS = 5 * 60 * 1000;
-const STABLES = new Set(["usdt","usdc","dai","busd","tusd","usdd","fdusd","pyusd","usde","usds","frax","lusd","gusd","usdp","eurc","eurs","usd0","rlusd","usdx","susd","crvusd","gho","usdb","usdy","bfusd","usd1","usdf","xaut","paxg","susde","usdtb","buidl","ousg","usyc","syrupusdc","usdg","usual"]);
+// Kryptovalutor som har certifikat/ETP på Avanza (Avanzas certifikatlista, kategori Kryptovaluta, 25 okt 2026).
+// CoinGecko-id → [namn hos Avanza, antal certifikat]. Index, stETH, XAUt och Story (IP, saknar säker träff hos CoinGecko) är utelämnade.
+const AVANZA_DATE = "25 okt 2026";
+const AVANZA = {
+  "bitcoin": ["Bitcoin", 98], "ethereum": ["Ether", 76], "solana": ["Solana", 15], "ripple": ["XRP", 8],
+  "cardano": ["Cardano", 7], "avalanche-2": ["Avalanche", 6], "polkadot": ["Polkadot", 6], "hyperliquid": ["Hyperliquid (HYPE)", 6],
+  "chainlink": ["Chainlink", 5], "litecoin": ["Litecoin", 5], "binancecoin": ["Binance (BNB)", 4], "near": ["NEAR", 4],
+  "polygon-ecosystem-token": ["Polygon", 4], "stellar": ["Stellar", 4], "uniswap": ["Uniswap", 4], "algorand": ["Algorand", 3],
+  "bittensor": ["Bittensor (TAO)", 3], "sui": ["Sui", 3], "aptos": ["Aptos (APT)", 2], "arbitrum": ["Arbitrum", 2],
+  "bitcoin-cash": ["Bitcoin Cash", 2], "celestia": ["Celestia (TIA)", 2], "internet-computer": ["Internet Computer", 2],
+  "tezos": ["Tezos", 2], "zcash": ["Zcash (ZEC)", 2], "aave": ["Aave (AAVE)", 1], "aerodrome-finance": ["Aerodrome Finance (AERO)", 1],
+  "akash-network": ["Akash Network (AKT)", 1], "fetch-ai": ["Artificial Superintelligence Alliance (FET)", 1], "arweave": ["Arweave (AR)", 1],
+  "canton-network": ["Canton Coin (CC)", 1], "coredaoorg": ["Core Blockchain", 1], "cosmos": ["Cosmos", 1], "crypto-com-chain": ["Cronos (CRO)", 1],
+  "curve-dao-token": ["Curve DAO (CRV)", 1], "dogecoin": ["Dogecoin", 1], "ethena": ["Ethena (ENA)", 1], "floki": ["FLOKI", 1],
+  "fantom": ["Fantom (FTM)", 1], "filecoin": ["Filecoin (FIL)", 1], "flare-networks": ["Flare (FLR)", 1], "four": ["Four (FORM)", 1],
+  "hedera-hashgraph": ["Hedera", 1], "iota": ["IOTA", 1], "immutable-x": ["Immutable (IMX)", 1], "injective-protocol": ["Injective (INJ)", 1],
+  "jupiter-exchange-solana": ["Jupiter (JUP)", 1], "kaspa": ["Kaspa (KAS)", 1], "lido-dao": ["Lido DAO (LDO)", 1], "lighter": ["Lighter (LIT)", 1],
+  "mantle": ["Mantle (MNT)", 1], "mantra": ["Mantra (OM)", 1], "okb": ["OKX (OKB)", 1], "ondo-finance": ["Ondo (ONDO)", 1],
+  "optimism": ["Optimism (OP)", 1], "pendle": ["Pendle (PENDLE)", 1], "pepe": ["Pepe (PEPE)", 1], "pi-network": ["Pi Network (PI)", 1],
+  "pyth-network": ["Pyth Network (PYTH)", 1], "quant-network": ["Quant (QNT)", 1], "render-token": ["Render (RENDER)", 1], "sei-network": ["Sei (SEI)", 1],
+  "shiba-inu": ["Shiba Inu (SHIB)", 1], "sky": ["Sky Protocol (SKY)", 1], "blockstack": ["Stacks (STX)", 1], "starknet": ["Starknet (STRK)", 1],
+  "thorchain": ["THORChain (RUNE)", 1], "tron": ["TRON", 1], "the-graph": ["The Graph (GRT)", 1],
+  "theta-token": ["Theta Network (THETA)", 1], "the-open-network": ["Toncoin", 1], "leo-token": ["UNUS SED LEO (LEO)", 1], "vechain": ["VeChain (VET)", 1],
+  "virtual-protocol": ["Virtuals Protocol (VIRTUAL)", 1], "worldcoin-wld": ["Worldcoin (WLD)", 1], "wormhole": ["Wormhole (W)", 1]
+};
+const AVANZA_LIST_URL = "https://www.avanza.se/borshandlade-produkter/certifikat-torg/lista.html";
 const CLASSES = ["Extrem rädsla", "Rädsla", "Neutral", "Girighet", "Extrem girighet"];
 const CLASS_VARS = ["--fear-x", "--fear", "--neutral", "--greed", "--greed-x"];
 
@@ -293,7 +314,7 @@ const store = {
 const state = {
   coins: [], market: [], sort: store.get("ks-sort", { key: "rank", dir: 1 }),
   watch: new Set(store.get("ks-watch", [])), onlyWatch: false,
-  q: "", cat: "", count: store.get("ks-count", "100"), cur: store.get("ks-cur", "sek"),
+  q: "", cat: "", cur: store.get("ks-cur", "sek"),
   history: store.get("ks-history", {}), lastFetch: 0, timer: null
 };
 
@@ -337,15 +358,8 @@ function hourlyVol(series) {
   const m = r.reduce((a, b) => a + b, 0) / r.length;
   return Math.sqrt(r.reduce((a, b) => a + (b - m) ** 2, 0) / (r.length - 1));
 }
-function isStable(c) {
-  if (STABLES.has(c.symbol.toLowerCase())) return true;
-  const s = c.sparkline_in_7d?.price || [];
-  if (s.length < 10) return false;
-  const mn = Math.min(...s), mx = Math.max(...s);
-  return mn > 0 && (mx - mn) / mn < 0.015 && Math.abs((c.price_change_percentage_7d_in_currency ?? 0)) < 1;
-}
 function computeScores(raw) {
-  const coins = raw.filter((c) => !isStable(c) && (c.sparkline_in_7d?.price || []).length > 24);
+  const coins = raw.filter((c) => AVANZA[c.id] && (c.sparkline_in_7d?.price || []).length > 24);
   coins.forEach((c) => {
     c._vol = hourlyVol(c.sparkline_in_7d.price);
     c._turn = c.market_cap > 0 ? c.total_volume / c.market_cap : 0;
@@ -529,7 +543,8 @@ function openDetail(id) {
   if (!c) return;
   $("d-img").src = c.image;
   $("d-title").textContent = `${c.name} (${c.symbol.toUpperCase()})`;
-  $("d-price").innerHTML = `${fmtPrice(c.price)} · 24 h ${fmtPct(c.ch24)}`;
+  const [avzName, avzCount] = AVANZA[c.id];
+  $("d-price").innerHTML = `${fmtPrice(c.price)} · 24 h ${fmtPct(c.ch24)}<br><a href="${AVANZA_LIST_URL}" target="_blank" rel="noopener" style="color:var(--accent)">${avzCount} certifikat på Avanza</a> <span class="muted">(${esc(avzName)})</span>`;
   $("d-gauge").innerHTML = gauge(c.score, 220);
   $("d-value").textContent = c.score;
   $("d-value").style.color = color(c.score);
@@ -560,9 +575,9 @@ async function load() {
     $("mkt-class").textContent = "Kunde inte hämta marknadsindex";
   });
   try {
-    const n = +state.count;
-    const pages = n > 250 ? [1, 2] : [1];
-    const raw = (await Promise.all(pages.map((p) => fetchJson(`${CG}/coins/markets?vs_currency=${state.cur}&order=market_cap_desc&per_page=${Math.min(n, 250)}&page=${p}&sparkline=true&price_change_percentage=24h,7d,30d`)))).flat();
+    // Bitcoin hämtas alltid med eftersom styrkan mot BTC behöver den som referens.
+    const ids = Object.keys(AVANZA).join(",");
+    const raw = await fetchJson(`${CG}/coins/markets?vs_currency=${state.cur}&ids=${ids}&order=market_cap_desc&per_page=250&sparkline=true&price_change_percentage=24h,7d,30d`);
     state.coins = computeScores(raw);
     recordHistory(state.coins);
     state.lastFetch = Date.now();
@@ -585,9 +600,7 @@ async function load() {
 $("refresh").addEventListener("click", load);
 $("q").addEventListener("input", (e) => { state.q = e.target.value; renderRows(); });
 $("cat").addEventListener("change", (e) => { state.cat = e.target.value; renderRows(); });
-$("count").value = state.count;
 $("cur").value = state.cur;
-$("count").addEventListener("change", (e) => { state.count = e.target.value; store.set("ks-count", state.count); load(); });
 $("cur").addEventListener("change", (e) => { state.cur = e.target.value; store.set("ks-cur", state.cur); load(); });
 const setWatchMode = (on) => { state.onlyWatch = on; $("f-all").setAttribute("aria-pressed", !on); $("f-watch").setAttribute("aria-pressed", on); renderRows(); };
 $("f-all").addEventListener("click", () => setWatchMode(false));
@@ -619,6 +632,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 $("mkt-gauge").innerHTML = gauge(null);
+$("avz-date").textContent = AVANZA_DATE;
 load();
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
