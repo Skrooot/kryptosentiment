@@ -1,0 +1,20 @@
+{
+  "name": "kryptosentiment-android",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Kryptosentiment: webbapp (www) och Android-app (Capacitor)",
+  "scripts": {
+    "serve": "node serve.js",
+    "runner": "node scripts/build-runner.js",
+    "sync": "node scripts/build-runner.js && cap sync android",
+    "build": "node scripts/build-runner.js && cap sync android && cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/background-runner": "3.0.0",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

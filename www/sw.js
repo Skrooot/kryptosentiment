@@ -1,6 +1,6 @@
 // Service worker: appens egna filer sparas för offline-start, marknadsdata hämtas alltid färskt.
-const CACHE = "ks-v1";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
+const CACHE = "ks-v2";
+const SHELL = ["./", "./index.html", "./score.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

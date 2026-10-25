@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Kryptosentiment</string>
+    <string name="title_activity_main">Kryptosentiment</string>
+    <string name="package_name">se.dahlander.kryptosentiment</string>
+    <string name="custom_url_scheme">se.dahlander.kryptosentiment</string>
+</resources>
