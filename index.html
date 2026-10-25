@@ -635,7 +635,8 @@ $("mkt-gauge").innerHTML = gauge(null);
 $("avz-date").textContent = AVANZA_DATE;
 load();
 
-if ("serviceWorker" in navigator && location.protocol !== "file:") {
+// I Android-appen (Capacitor) ligger filerna redan i appen, så ingen service worker behövs där.
+if ("serviceWorker" in navigator && location.protocol !== "file:" && !window.Capacitor) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 </script>
