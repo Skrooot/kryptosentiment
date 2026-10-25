@@ -7,7 +7,9 @@
     "serve": "node serve.js",
     "runner": "node scripts/build-runner.js",
     "sync": "node scripts/build-runner.js && cap sync android",
-    "build": "node scripts/build-runner.js && cap sync android && cd android && gradlew.bat assembleDebug"
+    "build": "node scripts/build-runner.js && cap sync android && cd android && gradlew.bat assembleDebug",
+    "test": "node scripts/test.js",
+    "test:live": "node scripts/test.js --live"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

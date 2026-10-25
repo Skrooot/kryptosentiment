@@ -43,6 +43,7 @@
   --hover: #1e2834; color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body);
@@ -117,6 +118,12 @@ dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: 
 dialog::backdrop { background: rgba(10, 14, 20, 0.55); }
 .dlg { padding: 20px; display: grid; gap: 18px; }
 .dlg-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.d-coin { align-items: start; min-width: 0; }
+.d-coin > div { min-width: 0; }
+.d-coin h2 { overflow-wrap: anywhere; }
+.d-coin img { margin-top: 4px; }
+.d-meta { font-size: 0.88rem; line-height: 1.5; }
+.d-meta a { color: var(--accent); }
 .dlg-grid { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .comp { display: grid; gap: 10px; }
 .comp-row { display: grid; grid-template-columns: minmax(0, 1fr) 3ch; gap: 4px 10px; align-items: center; }
@@ -146,7 +153,7 @@ footer a, .method a { color: var(--accent); }
   th:first-child, td:first-child { padding-left: 10px; }
   th:last-child, td:last-child { padding-right: 10px; }
   .coin { gap: 6px; }
-  .coin span { display: grid; line-height: 1.2; max-width: 22vw; overflow: hidden; text-overflow: ellipsis; }
+  td .coin > span { display: grid; line-height: 1.2; max-width: 22vw; overflow: hidden; text-overflow: ellipsis; }
   .score { gap: 6px; }
   .bar { width: 36px; }
   .comp-row .bar { width: 100%; }
@@ -169,7 +176,7 @@ footer a, .method a { color: var(--accent); }
   <header class="top">
     <div>
       <h1>Kryptosentiment</h1>
-      <p>Fear &amp; Greed för hela marknaden och ett eget beräknat index för varje kryptovaluta som går att köpa som certifikat på Avanza. Uppdateras automatiskt var femte minut.</p>
+      <p>Fear &amp; Greed för hela marknaden och ett eget beräknat index för varje kryptovaluta som går att köpa som certifikat på Avanza. Uppdateras var femte minut när appen är öppen.</p>
     </div>
     <div class="status">
       <span id="updated">Laddar…</span>
@@ -220,8 +227,8 @@ footer a, .method a { color: var(--accent); }
       <option value="4">Extrem girighet</option>
     </select>
     <select id="cur" aria-label="Valuta">
-      <option value="sek">SEK</option>
       <option value="usd">USD</option>
+      <option value="sek">SEK</option>
       <option value="eur">EUR</option>
     </select>
   </section>
@@ -258,7 +265,7 @@ footer a, .method a { color: var(--accent); }
       <li><b>Volym (10 %)</b>: handelsvolym i förhållande till börsvärde. Hög volym förstärker dagens riktning.</li>
       <li><b>Styrka mot Bitcoin (10 %)</b>: 7-dagarsutveckling jämfört med BTC.</li>
     </ul>
-    <p>Gränser: 0–24 extrem rädsla, 25–44 rädsla, 45–55 neutral, 56–75 girighet, 76–100 extrem girighet. Listan innehåller bara kryptovalutor som har minst ett certifikat eller en ETP på Avanza, enligt Avanzas certifikatlista <span id="avz-date"></span>. Kryptoindex, stETH, Tether Gold och Story (IP) är inte med. Utbudet ändras ibland, så kontrollera alltid hos Avanza innan du köper. Varje mätning sparas i din webbläsare så att du kan följa hur myntens index förändras över tid. Indexet är ett sentimentmått och inte ett köp- eller säljråd.</p>
+    <p>Gränser: 0–24 extrem rädsla, 25–44 rädsla, 45–55 neutral, 56–75 girighet, 76–100 extrem girighet. Listan innehåller bara kryptovalutor som har minst ett certifikat eller en ETP på Avanza, enligt Avanzas certifikatlista <span id="avz-date"></span>. Kryptoindex, stETH, Tether Gold och Story (IP) är inte med. Utbudet ändras ibland, så kontrollera alltid hos Avanza innan du köper. Index och procentförändringar räknas i USD, så de är desamma oavsett vilken valuta du visar priserna i. Varje mätning sparas i din webbläsare så att du kan följa hur myntens index förändras över tid. Indexet är ett sentimentmått och inte ett köp- eller säljråd.</p>
   </section>
 
   <footer>Data: <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a> och <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank" rel="noopener">alternative.me</a>. Historiken lagras lokalt i den här webbläsaren.</footer>
@@ -267,7 +274,7 @@ footer a, .method a { color: var(--accent); }
 <dialog id="dlg" aria-labelledby="d-title">
   <div class="dlg">
     <div class="dlg-head">
-      <div class="coin"><img id="d-img" alt=""><div><h2 id="d-title"></h2><span class="muted num" id="d-price"></span></div></div>
+      <div class="coin d-coin"><img id="d-img" alt=""><div><h2 id="d-title"></h2><div class="muted d-meta" id="d-price"></div></div></div>
       <button class="btn" type="button" id="d-close">Stäng</button>
     </div>
     <div class="dlg-grid">
@@ -299,8 +306,10 @@ const store = {
 const state = {
   coins: [], market: [], sort: store.get("ks-sort", { key: "rank", dir: 1 }),
   watch: new Set(store.get("ks-watch", [])), onlyWatch: false,
-  q: "", cat: "", cur: store.get("ks-cur", "sek"),
-  history: store.get("ks-history", {}), lastFetch: 0, timer: null
+  q: "", cat: "", cur: store.get("ks-cur", "usd"),
+  // v2: äldre historik räknades fel i SEK (sparklinjen är i USD) och används inte.
+  history: store.get("ks-history-v2", {}), lastFetch: 0, timer: null, loadSeq: 0,
+  fx: { usd: 1 }, fxAt: 0
 };
 
 const $ = (id) => document.getElementById(id);
@@ -330,16 +339,28 @@ function recordHistory(coins) {
     const cutoff = now - 120 * 864e5;
     while (arr.length && arr[0][0] < cutoff) arr.shift();
   });
-  store.set("ks-history", h);
+  store.set("ks-history-v2", h);
 }
+// Lägger in timmätningar från Android-appens bakgrundskörning, så historiken fylls även när appen är stängd.
+function mergeHistory(bg) {
+  if (!bg) return;
+  Object.keys(bg).forEach((id) => {
+    const arr = state.history[id] || (state.history[id] = []);
+    bg[id].forEach(([t, v]) => {
+      if (!arr.some((p) => Math.abs(p[0] - t) < 30 * 60 * 1000)) arr.push([t, v]);
+    });
+    arr.sort((a, b) => a[0] - b[0]);
+  });
+  store.set("ks-history-v2", state.history);
+}
+// Förändring mot mätningen närmast för ett dygn sedan. Kräver en mätning som är minst 20 timmar gammal.
 function deltaFor(c) {
   const arr = state.history[c.id];
   if (!arr || arr.length < 2) return null;
   const target = Date.now() - 864e5;
   let ref = null;
-  for (const p of arr) { if (p[0] <= target) ref = p; else break; }
-  if (!ref) ref = arr[0];
-  if (Date.now() - ref[0] < 30 * 60 * 1000) return null;
+  for (const p of arr) { if (p[0] <= target + 4 * 3600e3) ref = p; else break; }
+  if (!ref) return null;
   return c.score - ref[1];
 }
 
@@ -355,7 +376,7 @@ function gauge(v, size = 260) {
   const [nx, ny] = pt(v == null ? 50 : v, r - 30);
   const needle = v == null ? "" : `<line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--ink)" stroke-width="4" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="8" fill="var(--ink)"/>`;
   const ticks = [0, 25, 50, 75, 100].map((t) => { const [x, y] = pt(t, r + 20); return `<text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="IBM Plex Mono, monospace">${t}</text>`; }).join("");
-  return `<svg viewBox="0 0 260 150" width="${size}" role="img" aria-label="Mätare ${v ?? ""} av 100">${arcs}${ticks}${needle}</svg>`;
+  return `<svg viewBox="-12 0 284 150" width="${size}" role="img" aria-label="Mätare ${v ?? ""} av 100">${arcs}${ticks}${needle}</svg>`;
 }
 function spark(series) {
   if (!series || series.length < 2) return "";
@@ -458,7 +479,7 @@ function openDetail(id) {
   $("d-img").src = c.image;
   $("d-title").textContent = `${c.name} (${c.symbol.toUpperCase()})`;
   const [avzName, avzCount] = AVANZA[c.id];
-  $("d-price").innerHTML = `${fmtPrice(c.price)} · 24 h ${fmtPct(c.ch24)}<br><a href="${AVANZA_LIST_URL}" target="_blank" rel="noopener" style="color:var(--accent)">${avzCount} certifikat på Avanza</a> <span class="muted">(${esc(avzName)})</span>`;
+  $("d-price").innerHTML = `<span class="num">${fmtPrice(c.price)}</span> · 24 h <span class="num">${fmtPct(c.ch24)}</span><br><a href="${AVANZA_LIST_URL}" target="_blank" rel="noopener">${avzCount} certifikat på Avanza</a> (${esc(avzName)})`;
   $("d-gauge").innerHTML = gauge(c.score, 220);
   $("d-value").textContent = c.score;
   $("d-value").style.color = color(c.score);
@@ -482,17 +503,28 @@ async function fetchJson(url) {
   if (!r.ok) throw new Error(`Servern svarade ${r.status}.`);
   return r.json();
 }
+// Växelkurser från CoinGecko (värden per BTC), hämtas högst en gång i timmen.
+async function loadFx() {
+  if (Date.now() - state.fxAt < 3600e3 && state.fx.sek) return;
+  const j = await fetchJson(`${CG}/exchange_rates`);
+  const usd = j.rates.usd.value;
+  state.fx = { usd: 1, sek: j.rates.sek.value / usd, eur: j.rates.eur.value / usd };
+  state.fxAt = Date.now();
+}
 async function load() {
+  const seq = ++state.loadSeq;
+  const cur = state.cur;
   $("refresh").disabled = true;
   $("updated").textContent = "Hämtar…";
   const mkt = fetchJson(FNG).then((j) => { state.market = j.data || []; renderMarket(); }).catch(() => {
     $("mkt-class").textContent = "Kunde inte hämta marknadsindex";
   });
   try {
-    // Bitcoin hämtas alltid med eftersom styrkan mot BTC behöver den som referens.
-    const ids = Object.keys(AVANZA).join(",");
-    const raw = await fetchJson(`${CG}/coins/markets?vs_currency=${state.cur}&ids=${ids}&order=market_cap_desc&per_page=250&sparkline=true&price_change_percentage=24h,7d,30d`);
-    state.coins = computeScores(raw);
+    // Indexet räknas alltid på USD-data. Priser räknas om till vald valuta med aktuell växelkurs.
+    const [raw] = await Promise.all([fetchJson(MARKETS_URL()), cur === "usd" ? null : loadFx()]);
+    if (seq !== state.loadSeq) return; // en nyare hämtning har startat, t.ex. efter valutabyte
+    const rate = state.fx[cur] || 1;
+    state.coins = computeScores(raw).map((c) => ({ ...c, price: c.price == null ? null : c.price * rate }));
     recordHistory(state.coins);
     state.lastFetch = Date.now();
     renderDist();
@@ -500,11 +532,13 @@ async function load() {
     $("updated").textContent = "Uppdaterad " + new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
     if ($("dlg").open && $("dlg").dataset.id) openDetail($("dlg").dataset.id);
   } catch (e) {
+    if (seq !== state.loadSeq) return;
     const msg = e instanceof TypeError ? "Ingen kontakt med CoinGecko. Kontrollera internetanslutningen och försök igen." : e.message;
-    if (state.coins.length) $("updated").textContent = msg;
+    if (state.coins.length) $("updated").textContent = `${msg} Visar data från ${new Date(state.lastFetch).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
     else $("rows").innerHTML = `<tr><td colspan="11" class="error">${esc(msg)}</td></tr>`;
   }
   await mkt;
+  if (seq !== state.loadSeq) return;
   $("refresh").disabled = false;
   clearTimeout(state.timer);
   state.timer = setTimeout(load, REFRESH_MS);
@@ -552,7 +586,7 @@ load();
 /* ---------- Android: bakgrundskontroll varje timme och notiser ---------- */
 const RUNNER_LABEL = "se.dahlander.kryptosentiment.check";
 const runner = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()
-  ? window.Capacitor.Plugins.BackgroundRunner : null;
+  ? window.Capacitor.Plugins.CapacitorBackgroundRunner || null : null; // tilläggets registrerade namn
 
 async function notifyState() {
   const perm = await runner.checkPermissions();
@@ -595,8 +629,11 @@ if (runner) {
     }
     renderNotify();
   });
+  const pullBgHistory = () => runner.dispatchEvent({ label: RUNNER_LABEL, event: "getHistory", details: {} })
+    .then((r) => { mergeHistory(r && r.history); if (state.coins.length) renderRows(); }, () => {});
   renderNotify();
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) renderNotify(); });
+  pullBgHistory();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { renderNotify(); pullBgHistory(); } });
 }
 
 // I Android-appen (Capacitor) ligger filerna redan i appen, så ingen service worker behövs där.

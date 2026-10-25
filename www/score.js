@@ -2,6 +2,7 @@
 // Ingen DOM-åtkomst här, så filen kan köras i bakgrundsmiljön utan webbläsare.
 const CG = "https://api.coingecko.com/api/v3";
 const FNG = "https://api.alternative.me/fng/?limit=60";
+const MARKETS_URL = () => `${CG}/coins/markets?vs_currency=usd&ids=${Object.keys(AVANZA).join(",")}&order=market_cap_desc&per_page=250&sparkline=true&price_change_percentage=24h,7d,30d`;
 // Kryptovalutor som har certifikat/ETP på Avanza (Avanzas certifikatlista, kategori Kryptovaluta, 25 okt 2026).
 // CoinGecko-id → [namn hos Avanza, antal certifikat]. Index, stETH, XAUt och Story (IP, saknar säker träff hos CoinGecko) är utelämnade.
 const AVANZA_DATE = "25 okt 2026";
@@ -54,10 +55,16 @@ function hourlyVol(series) {
   const m = r.reduce((a, b) => a + b, 0) / r.length;
   return Math.sqrt(r.reduce((a, b) => a + (b - m) ** 2, 0) / (r.length - 1));
 }
+// raw ska vara CoinGecko /coins/markets med vs_currency=usd. Sparklinjen levereras alltid i USD,
+// så allt räknas i USD för att indexet ska bli detsamma oavsett vilken valuta appen visar priser i.
 function computeScores(raw) {
-  const coins = raw.filter((c) => AVANZA[c.id] && (c.sparkline_in_7d?.price || []).length > 24);
+  const coins = raw.filter((c) => {
+    if (!AVANZA[c.id]) return false;
+    c._s = (c.sparkline_in_7d?.price || []).filter((p) => Number.isFinite(p) && p > 0);
+    return c._s.length > 24;
+  });
   coins.forEach((c) => {
-    c._vol = hourlyVol(c.sparkline_in_7d.price);
+    c._vol = hourlyVol(c._s);
     c._turn = c.market_cap > 0 ? c.total_volume / c.market_cap : 0;
   });
   const medVol = median(coins.map((c) => c._vol).filter((v) => v > 0)) || 1e-9;
@@ -66,18 +73,19 @@ function computeScores(raw) {
   const btc7 = btc?.price_change_percentage_7d_in_currency ?? 0;
 
   return coins.map((c) => {
-    const s = c.sparkline_in_7d.price;
+    const s = c._s;
     const ch24 = c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h ?? 0;
     const ch7 = c.price_change_percentage_7d_in_currency ?? 0;
     const ch30 = c.price_change_percentage_30d_in_currency ?? ch7;
 
     const momentum = logistic(0.3 * ch24 + 0.4 * ch7 + 0.3 * (ch30 / 2), 6);
-    const fourH = s.filter((_, i) => i % 4 === 0); fourH.push(s[s.length - 1]);
+    const fourH = s.filter((_, i) => i % 4 === 0);
+    if ((s.length - 1) % 4 !== 0) fourH.push(s[s.length - 1]);
     const rsiV = rsi(fourH, 14);
     const volRatio = c._vol / medVol;
     const volatility = clamp(50 - 30 * Math.log2(Math.max(volRatio, 0.05)), 5, 95);
     const mn = Math.min(...s), mx = Math.max(...s);
-    const range = mx > mn ? clamp(((c.current_price ?? s[s.length - 1]) - mn) / (mx - mn) * 100) : 50;
+    const range = mx > mn ? clamp((s[s.length - 1] - mn) / (mx - mn) * 100) : 50;
     const turnRatio = c._turn / medTurn;
     const volumeStrength = turnRatio > 1 ? Math.min(40, 20 * Math.log2(turnRatio)) : 0;
     const volume = clamp(50 + Math.sign(ch24) * volumeStrength * Math.min(1, Math.abs(ch24) / 2));
