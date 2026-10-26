@@ -1,3 +1,4 @@
 node_modules/
 www/runners/
 build.log
+scripts/.cache/

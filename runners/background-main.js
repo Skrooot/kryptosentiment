@@ -5,11 +5,16 @@
 // Varje körning räknar om indexet för alla Avanza-mynt, sparar en timmätning och jämför med förra
 // körningens nivåer. Notis skickas när ett mynt går ner i extrem rädsla eller upp i extrem girighet.
 
-const KEY_LEVELS = "ks-levels";
+// Nycklarna har modellversion i namnet: när formeln ändras börjar nivåer och historik om,
+// så att bytet i sig inte ger notiser.
+const KEY_LEVELS = "ks-levels-v2";
 const KEY_STATUS = "ks-bg-status";
 const KEY_NOTIFY = "ks-notify";
 const KEY_NOTIFIED = "ks-notified";
-const KEY_HISTORY = "ks-bg-history";
+const KEY_HISTORY = "ks-bg-history-v3";
+const KEY_DAILY = "ks-daily";
+const KEY_RAW = "ks-names"; // namn, ikon och rang från CoinGecko, används när Binance är reservkälla
+const DAILY_PER_RUN = 12; // högst så många CoinGecko-mynt per körning (Binance-mynten har ingen gräns här)
 const SMALL_ICON = "ic_stat_sentiment"; // res/drawable/ic_stat_sentiment.xml
 const MAX_SINGLE = 4; // fler mynt än så samlas i en sammanfattande notis
 const QUIET_MS = 12 * 3600e3; // samma mynt och samma läge ger högst en notis per 12 timmar
@@ -62,6 +67,31 @@ function buildNotices(fear, greed) {
   return notices;
 }
 
+// Hämtar 90-dagarshistorik för de mynt som saknar den eller där den är äldre än ett dygn.
+// Alla Binance-mynt hämtas direkt; CoinGecko-mynten högst DAILY_PER_RUN per körning, ett var sjätte sekund.
+async function refreshDaily(daily) {
+  const stale = staleHistoryIds(daily);
+  const ids = stale.filter((id) => BINANCE[id]).concat(stale.filter((id) => !BINANCE[id]).slice(0, DAILY_PER_RUN));
+  let fetched = 0, cgBlocked = false;
+  const get = async (url) => { try { const r = await fetch(url); return r.ok ? parseDaily(await r.json()) : (r.status === 429 ? "429" : null); } catch (e) { return null; } };
+  for (const id of ids) {
+    const src = dailySource(id);
+    let d = src.binance ? await get(src.url) : null;
+    if (!(Array.isArray(d) && d.length >= 60) && !cgBlocked) { // reserv: CoinGecko (även när Binance har för kort historik)
+      d = await get(DAILY_URL(id));
+      if (d === "429") cgBlocked = true; // CoinGeckos gräns nådd, resten tas nästa timme
+      await new Promise((res) => setTimeout(res, 6000));
+    }
+    if (Array.isArray(d)) {
+      daily[id] = { at: d.length >= 60 ? Date.now() : Date.now() - HISTORY_MAX_AGE + 3600e3, daily: d };
+      fetched++;
+    }
+    if (src.binance) await new Promise((res) => setTimeout(res, src.pause));
+  }
+  if (fetched) CapacitorKV.set(KEY_DAILY, JSON.stringify(daily));
+  return fetched;
+}
+
 function saveHistory(coins, now) {
   const hist = readJson(KEY_HISTORY) || {};
   coins.forEach((c) => {
@@ -77,10 +107,14 @@ function saveHistory(coins, now) {
 // args.silent = true används när appen själv startar en kontroll: nivåerna sparas men ingen notis skickas.
 addEventListener("checkSentiment", async (resolve, reject, args) => {
   try {
-    const res = await fetch(MARKETS_URL());
-    if (!res.ok) throw new Error(`CoinGecko svarade ${res.status}`);
-    const coins = computeScores(await res.json());
-    if (!coins.length) throw new Error("Inga mynt i svaret");
+    const m = await fetchMarkets(readJson(KEY_RAW));
+    const raw = m.raw;
+    if (m.source === "coingecko") CapacitorKV.set(KEY_RAW, JSON.stringify(raw.map((c) => ({ id: c.id, name: c.name, symbol: c.symbol, image: c.image, market_cap_rank: c.market_cap_rank }))));
+    const daily = readJson(KEY_DAILY) || {};
+    let dailyFetched = 0;
+    try { dailyFetched = await refreshDaily(daily); } catch (e) { /* historiken kompletteras nästa körning */ }
+    // Preliminära värden (utan 90 dagars historik) är för osäkra för notiser och sparas inte som nivåer.
+    const coins = computeScores(raw, daily).filter((c) => !c.prelim);
     const now = Date.now();
 
     const prev = readJson(KEY_LEVELS);
@@ -92,7 +126,7 @@ addEventListener("checkSentiment", async (resolve, reject, args) => {
     const notified = readJson(KEY_NOTIFIED) || {};
     // Nytt extremläge sedan förra körningen, och ingen notis om samma läge de senaste 12 timmarna
     // (annars ger ett mynt som pendlar kring gränsen en notis varje timme).
-    const entered = (c, cls) => c.cls === cls && prev[c.id] !== undefined && prev[c.id] !== cls &&
+    const entered = (c, cls) => c.cls === cls && prev && prev[c.id] !== undefined && prev[c.id] !== cls &&
       !(notified[c.id + ":" + cls] > now - QUIET_MS);
     let sent = 0;
     if (prev && notifyOn && !silent) {
@@ -108,19 +142,25 @@ addEventListener("checkSentiment", async (resolve, reject, args) => {
       sent = notices.length;
     }
 
-    CapacitorKV.set(KEY_LEVELS, JSON.stringify(levels));
+    // Behåll tidigare nivå för mynt som inte kunde räknas den här gången
+    CapacitorKV.set(KEY_LEVELS, JSON.stringify(Object.assign({}, prev || {}, levels)));
     saveHistory(coins, now);
     const status = {
       at: now,
       coins: coins.length,
+      prelim: Object.keys(AVANZA).length - coins.length,
+      dailyFetched,
       sent,
+      source: m.source,
       extremeFear: coins.filter((c) => c.cls === 0).map((c) => c.name),
       extremeGreed: coins.filter((c) => c.cls === 4).map((c) => c.name)
     };
     CapacitorKV.set(KEY_STATUS, JSON.stringify(status));
     resolve(status);
   } catch (err) {
-    CapacitorKV.set(KEY_STATUS, JSON.stringify({ at: Date.now(), error: String(err && err.message || err) }));
+    // Kort, läsbart fel (fetch-fel i bakgrundsmotorn innehåller annars hela adressen)
+    const msg = String(err && err.message || err);
+    CapacitorKV.set(KEY_STATUS, JSON.stringify({ at: Date.now(), error: msg.includes("http") ? "Ingen kontakt med datakällorna" : msg.slice(0, 120) }));
     reject(err);
   }
 });
@@ -132,6 +172,21 @@ addEventListener("getStatus", (resolve) => {
 
 addEventListener("getHistory", (resolve) => {
   resolve({ history: readJson(KEY_HISTORY) || {} });
+});
+
+addEventListener("getDaily", (resolve) => {
+  resolve({ daily: readJson(KEY_DAILY) || {} });
+});
+
+// Appen skickar historik den själv har hämtat. Nyast vinner per mynt.
+addEventListener("putDaily", (resolve, reject, args) => {
+  const mine = readJson(KEY_DAILY) || {}, theirs = (args && args.daily) || {};
+  let n = 0;
+  Object.keys(theirs).forEach((id) => {
+    if (AVANZA[id] && Array.isArray(theirs[id].daily) && (theirs[id].at || 0) > ((mine[id] && mine[id].at) || 0)) { mine[id] = theirs[id]; n++; }
+  });
+  if (n) CapacitorKV.set(KEY_DAILY, JSON.stringify(mine));
+  resolve({ updated: n });
 });
 
 addEventListener("setNotify", (resolve, reject, args) => {
