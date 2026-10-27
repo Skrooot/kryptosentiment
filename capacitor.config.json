@@ -13,6 +13,9 @@
       "repeat": true,
       "interval": 60,
       "autoStart": true
+    },
+    "CapacitorHttp": {
+      "enabled": true
     }
   }
 }

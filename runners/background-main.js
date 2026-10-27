@@ -4,6 +4,7 @@
 //
 // Varje körning räknar om indexet för alla Avanza-mynt, sparar en timmätning och jämför med förra
 // körningens nivåer. Notis skickas när ett mynt går ner i extrem rädsla eller upp i extrem girighet.
+// Under börsdagen (vardagar 09–19) görs samma sak för aktierna på Large Cap och Mid Cap (www/stocks.js).
 
 // Nycklarna har modellversion i namnet: när formeln ändras börjar nivåer och historik om,
 // så att bytet i sig inte ger notiser.
@@ -14,6 +15,10 @@ const KEY_NOTIFIED = "ks-notified";
 const KEY_HISTORY = "ks-bg-history-v3";
 const KEY_DAILY = "ks-daily";
 const KEY_RAW = "ks-names"; // namn, ikon och rang från CoinGecko, används när Binance är reservkälla
+const KEY_NOTIFY_STOCKS = "ks-notify-stocks";
+const KEY_STOCK_LEVELS = "ks-levels-stocks-v1";
+const KEY_STOCK_STATUS = "ks-bg-stock-status";
+const YAHOO = "https://query1.finance.yahoo.com";
 const DAILY_PER_RUN = 12; // högst så många CoinGecko-mynt per körning (Binance-mynten har ingen gräns här)
 const SMALL_ICON = "ic_stat_sentiment"; // res/drawable/ic_stat_sentiment.xml
 const MAX_SINGLE = 4; // fler mynt än så samlas i en sammanfattande notis
@@ -33,7 +38,8 @@ function listNames(coins) {
   return coins.map((c) => `${c.name} (${c.score})`).join(", ");
 }
 
-function buildNotices(fear, greed) {
+function buildNotices(fear, greed, kind = "crypto") {
+  const stock = kind === "stocks";
   let id = Math.floor(Date.now() / 1000) % 100000000;
   const notices = [];
   if (fear.length + greed.length > MAX_SINGLE) {
@@ -42,7 +48,7 @@ function buildNotices(fear, greed) {
     if (greed.length) parts.push(`Extrem girighet: ${listNames(greed)}`);
     notices.push({
       id: id++,
-      title: `${fear.length + greed.length} kryptovalutor har bytt till ett extremläge`,
+      title: `${fear.length + greed.length} ${stock ? "aktier" : "kryptovalutor"} har bytt till ett extremläge`,
       body: parts.join(". "),
       largeBody: parts.join("\n\n"),
       autoCancel: true,
@@ -52,15 +58,15 @@ function buildNotices(fear, greed) {
   }
   fear.forEach((c) => notices.push({
     id: id++,
-    title: `${c.name} är i extrem rädsla`,
-    body: `Indexet har fallit till ${c.score} av 100. ${AVANZA[c.id][0]} finns som certifikat på Avanza.`,
+    title: `${stock ? "Aktien " : ""}${c.name} är i extrem rädsla`,
+    body: stock ? `Indexet har fallit till ${c.score} av 100 (${c.seg === "L" ? "Large Cap" : "Mid Cap"}).` : `Indexet har fallit till ${c.score} av 100. ${AVANZA[c.id][0]} finns som certifikat på Avanza.`,
     autoCancel: true,
     smallIcon: SMALL_ICON
   }));
   greed.forEach((c) => notices.push({
     id: id++,
-    title: `${c.name} är i extrem girighet`,
-    body: `Indexet har stigit till ${c.score} av 100. ${AVANZA[c.id][0]} finns som certifikat på Avanza.`,
+    title: `${stock ? "Aktien " : ""}${c.name} är i extrem girighet`,
+    body: stock ? `Indexet har stigit till ${c.score} av 100 (${c.seg === "L" ? "Large Cap" : "Mid Cap"}).` : `Indexet har stigit till ${c.score} av 100. ${AVANZA[c.id][0]} finns som certifikat på Avanza.`,
     autoCancel: true,
     smallIcon: SMALL_ICON
   }));
@@ -104,8 +110,52 @@ function saveHistory(coins, now) {
   CapacitorKV.set(KEY_HISTORY, JSON.stringify(hist));
 }
 
+// Nya extremlägen sedan förra körningen, högst en notis per objekt och läge per QUIET_MS.
+// prefix skiljer aktier från mynt i listan över skickade notiser.
+function notifyChanges(list, prev, kind, prefix, now) {
+  const notified = readJson(KEY_NOTIFIED) || {};
+  const entered = (c, cls) => c.cls === cls && prev && prev[c.id] !== undefined && prev[c.id] !== cls &&
+    !(notified[prefix + c.id + ":" + cls] > now - QUIET_MS);
+  const fear = list.filter((c) => entered(c, 0)), greed = list.filter((c) => entered(c, 4));
+  const notices = buildNotices(fear, greed, kind);
+  if (notices.length) {
+    CapacitorNotifications.schedule(notices);
+    fear.forEach((c) => { notified[prefix + c.id + ":0"] = now; });
+    greed.forEach((c) => { notified[prefix + c.id + ":4"] = now; });
+    CapacitorKV.set(KEY_NOTIFIED, JSON.stringify(notified));
+  }
+  return notices.length;
+}
+// Börsdag: vardagar 09–19 svensk tid (en körning efter stängning fångar slutkurserna).
+const stockHours = (d = new Date()) => stockMarketOpen(d, 19);
+async function checkStocks(silent, force) {
+  const now = Date.now();
+  if (!force && !stockHours()) return null;
+  try {
+    const r = await fetchStocks(YAHOO, { headers: { "User-Agent": STOCK_UA }, pause: 600 });
+    const list = r.items.filter((x) => x.score != null);
+    if (!list.length) throw new Error("Inga aktiekurser i svaret");
+    const prev = readJson(KEY_STOCK_LEVELS), levels = {};
+    list.forEach((c) => { levels[c.id] = c.cls; });
+    const sent = prev && !silent && readJson(KEY_NOTIFY_STOCKS) !== false ? notifyChanges(list, prev, "stocks", "s:", now) : 0;
+    CapacitorKV.set(KEY_STOCK_LEVELS, JSON.stringify(Object.assign({}, prev || {}, levels)));
+    const st = { at: now, stocks: list.length, failed: r.failed.length, sent, index: r.index && r.index.score,
+      extremeFear: list.filter((c) => c.cls === 0).length, extremeGreed: list.filter((c) => c.cls === 4).length };
+    CapacitorKV.set(KEY_STOCK_STATUS, JSON.stringify(st));
+    return st;
+  } catch (err) {
+    const msg = String(err && err.message || err);
+    const st = { at: now, error: msg.includes("http") ? "Ingen kontakt med Yahoo Finance" : msg.slice(0, 120) };
+    CapacitorKV.set(KEY_STOCK_STATUS, JSON.stringify(st));
+    return st;
+  }
+}
+
 // args.silent = true används när appen själv startar en kontroll: nivåerna sparas men ingen notis skickas.
+// args.stocks = true kör aktiekontrollen även utanför börstid (används av tester).
 addEventListener("checkSentiment", async (resolve, reject, args) => {
+  const silent = !!(args && args.silent);
+  const stocksPromise = checkStocks(silent, !!(args && args.stocks));
   try {
     const m = await fetchMarkets(readJson(KEY_RAW));
     const raw = m.raw;
@@ -121,26 +171,9 @@ addEventListener("checkSentiment", async (resolve, reject, args) => {
     const levels = {};
     coins.forEach((c) => { levels[c.id] = c.cls; });
 
-    const silent = !!(args && args.silent);
-    const notifyOn = readJson(KEY_NOTIFY) !== false;
-    const notified = readJson(KEY_NOTIFIED) || {};
     // Nytt extremläge sedan förra körningen, och ingen notis om samma läge de senaste 12 timmarna
     // (annars ger ett mynt som pendlar kring gränsen en notis varje timme).
-    const entered = (c, cls) => c.cls === cls && prev && prev[c.id] !== undefined && prev[c.id] !== cls &&
-      !(notified[c.id + ":" + cls] > now - QUIET_MS);
-    let sent = 0;
-    if (prev && notifyOn && !silent) {
-      const fear = coins.filter((c) => entered(c, 0));
-      const greed = coins.filter((c) => entered(c, 4));
-      const notices = buildNotices(fear, greed);
-      if (notices.length) {
-        CapacitorNotifications.schedule(notices);
-        fear.forEach((c) => { notified[c.id + ":0"] = now; });
-        greed.forEach((c) => { notified[c.id + ":4"] = now; });
-        CapacitorKV.set(KEY_NOTIFIED, JSON.stringify(notified));
-      }
-      sent = notices.length;
-    }
+    const sent = prev && !silent && readJson(KEY_NOTIFY) !== false ? notifyChanges(coins, prev, "crypto", "", now) : 0;
 
     // Behåll tidigare nivå för mynt som inte kunde räknas den här gången
     CapacitorKV.set(KEY_LEVELS, JSON.stringify(Object.assign({}, prev || {}, levels)));
@@ -156,8 +189,10 @@ addEventListener("checkSentiment", async (resolve, reject, args) => {
       extremeGreed: coins.filter((c) => c.cls === 4).map((c) => c.name)
     };
     CapacitorKV.set(KEY_STATUS, JSON.stringify(status));
+    status.stocks = await stocksPromise;
     resolve(status);
   } catch (err) {
+    await stocksPromise;
     // Kort, läsbart fel (fetch-fel i bakgrundsmotorn innehåller annars hela adressen)
     const msg = String(err && err.message || err);
     CapacitorKV.set(KEY_STATUS, JSON.stringify({ at: Date.now(), error: msg.includes("http") ? "Ingen kontakt med datakällorna" : msg.slice(0, 120) }));
@@ -167,7 +202,8 @@ addEventListener("checkSentiment", async (resolve, reject, args) => {
 
 // Appen läser senaste bakgrundskörningen, timhistoriken och slår på eller av notiser.
 addEventListener("getStatus", (resolve) => {
-  resolve({ status: readJson(KEY_STATUS), notify: readJson(KEY_NOTIFY) !== false });
+  resolve({ status: readJson(KEY_STATUS), notify: readJson(KEY_NOTIFY) !== false,
+    stockStatus: readJson(KEY_STOCK_STATUS), notifyStocks: readJson(KEY_NOTIFY_STOCKS) !== false });
 });
 
 addEventListener("getHistory", (resolve) => {
@@ -189,7 +225,9 @@ addEventListener("putDaily", (resolve, reject, args) => {
   resolve({ updated: n });
 });
 
+// args.kind: "crypto" (standard) eller "stocks"
 addEventListener("setNotify", (resolve, reject, args) => {
-  CapacitorKV.set(KEY_NOTIFY, JSON.stringify(!!(args && args.on)));
-  resolve({ notify: !!(args && args.on) });
+  const on = !!(args && args.on), key = args && args.kind === "stocks" ? KEY_NOTIFY_STOCKS : KEY_NOTIFY;
+  CapacitorKV.set(key, JSON.stringify(on));
+  resolve({ notify: on, kind: (args && args.kind) || "crypto" });
 });

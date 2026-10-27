@@ -5,9 +5,9 @@ const path = require("path");
 const assert = require("assert");
 
 const root = path.join(__dirname, "..");
-const scoreSrc = fs.readFileSync(path.join(root, "www", "score.js"), "utf8");
+const scoreSrc = fs.readFileSync(path.join(root, "www", "score.js"), "utf8") + "\n" + fs.readFileSync(path.join(root, "www", "stocks.js"), "utf8");
 const runnerSrc = fs.readFileSync(path.join(root, "runners", "background-main.js"), "utf8");
-const S = new Function(`${scoreSrc}; return { CG, MARKETS_URL, DAILY_URL, BINANCE, dailySource, HISTORY_MAX_AGE, AVANZA, CLASSES, MODEL, clamp, classIdx, rsi, modelFeatures, modelScore, computeScores, staleHistoryIds, parseDaily };`)();
+const S = new Function(`${scoreSrc}; return { STOCKS, STOCK_MODEL, STOCK_MIN_CLOSES, stockScoreAt, stockItem, fetchStocks, CG, MARKETS_URL, DAILY_URL, BINANCE, dailySource, HISTORY_MAX_AGE, AVANZA, CLASSES, MODEL, clamp, classIdx, rsi, modelFeatures, modelScore, computeScores, staleHistoryIds, parseDaily };`)();
 
 let passed = 0, failed = 0;
 async function test(name, fn) {
@@ -116,6 +116,66 @@ const scoreOf = (trend, vol) => { const { daily, s7 } = series(trend, vol); retu
     assert.strictEqual(st.length, Object.keys(S.AVANZA).length - 1);
   });
 
+  console.log("Aktier (aktiemodell " + S.STOCK_MODEL.version + ")");
+  // 250 börsdagar: sidledes först, sedan trend de sista 40 dagarna
+  const closes = (trend, vol = 0.015, n = 250) => Array.from({ length: n }, (_, i) => {
+    const base = 100 * (i < n - 40 ? 1 : Math.exp((trend === "up" ? 1 : trend === "down" ? -1 : 0) * vol * 0.8 * (i - (n - 40))));
+    return base * (1 + vol * 0.5 * Math.sin(i * 2.3));
+  });
+  const ts = (n) => Array.from({ length: n }, (_, i) => 1.7e9 + i * 86400);
+  await test("aktie: uppgång ger girighet, fall ger rädsla, värden 0–100", () => {
+    const up = S.stockScoreAt(closes("up"), 249).score, down = S.stockScoreAt(closes("down"), 249).score, flat = S.stockScoreAt(closes("flat"), 249).score;
+    assert.ok(up >= 76, `uppgång ${up}`);
+    assert.ok(down <= 24, `fall ${down}`);
+    assert.ok(flat > down && flat < up, `sidledes ${flat}`);
+    for (const v of [0.003, 0.015, 0.06]) for (const t of ["up", "down", "flat"]) { const x = S.stockScoreAt(closes(t, v), 249).score; assert.ok(Number.isInteger(x) && x >= 0 && x <= 100); }
+  });
+  await test("aktie: listobjekt med förändringar, historik och kort historik som saknar värde", () => {
+    const c = closes("up"), it = S.stockItem(S.STOCKS[0], ts(c.length), c, { regularMarketPrice: c.at(-1), currency: "SEK" });
+    assert.strictEqual(it.id, S.STOCKS[0][0]);
+    assert.ok(Math.abs(it.ch24 - (c.at(-1) / c.at(-2) - 1) * 100) < 1e-9);
+    assert.strictEqual(it.hist.length, 120);
+    assert.strictEqual(it.hist.at(-1)[1], it.score, "sista historikpunkten är dagens värde");
+    const withNull = c.slice(); withNull[100] = null;
+    assert.ok(Number.isFinite(S.stockItem(S.STOCKS[0], ts(c.length), withNull, null).score), "null i kurserna hoppas över");
+    const fresh = S.stockItem(S.STOCKS[0], ts(40), c.slice(-40), null);
+    assert.strictEqual(fresh.prelim, true);
+    assert.strictEqual(fresh.score, null);
+    assert.strictEqual(S.stockItem(S.STOCKS[0], ts(3), c.slice(-3), null), null);
+  });
+  await test("börstid räknas i svensk tid oavsett tidszon, med sommartid", () => {
+    const T = new Function(`${scoreSrc}; return { stockholmTime, stockMarketOpen };`)();
+    assert.strictEqual(T.stockholmTime(new Date(Date.UTC(2026, 9, 28, 8, 30))).hour, 9.5, "vintertid (CET)");
+    assert.strictEqual(T.stockholmTime(new Date(Date.UTC(2026, 6, 1, 7, 30))).hour, 9.5, "sommartid (CEST)");
+    assert.strictEqual(T.stockMarketOpen(new Date(Date.UTC(2026, 9, 28, 8, 30))), true, "onsdag 09:30");
+    assert.strictEqual(T.stockMarketOpen(new Date(Date.UTC(2026, 9, 28, 16, 45))), false, "onsdag 17:45");
+    assert.strictEqual(T.stockMarketOpen(new Date(Date.UTC(2026, 9, 28, 16, 45)), 19), true, "efter stängning för bakgrunden");
+    assert.strictEqual(T.stockMarketOpen(new Date(Date.UTC(2026, 9, 31, 10, 0))), false, "lördag");
+  });
+  await test("aktielistan: 302 unika aktier på Large Cap och Mid Cap", () => {
+    assert.strictEqual(S.STOCKS.length, 302);
+    assert.strictEqual(new Set(S.STOCKS.map((x) => x[0])).size, 302);
+    assert.ok(S.STOCKS.every((x) => /\.ST$/.test(x[0]) && (x[2] === "L" || x[2] === "M") && x[3] > 0));
+  });
+  // Yahoo-svar i spark-format för de efterfrågade kortnamnen
+  let stockTrends = {}, missing = new Set();
+  const yahoo = (url) => {
+    const syms = decodeURIComponent(url.match(/symbols=([^&]+)/)[1]).split(",");
+    if (syms.some((x) => missing.has(x))) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ spark: { result: syms.map((sym) => { const c = closes(stockTrends[sym] || "flat"); return { symbol: sym, response: [{ meta: { regularMarketPrice: c.at(-1), currency: "SEK" }, timestamp: ts(c.length), indicators: { quote: [{ close: c }] } }] }; }) } }) };
+  };
+  await test("aktie: hämtning i grupper om 20, ogiltigt kortnamn stoppar inte resten", async () => {
+    missing = new Set([S.STOCKS[5][0]]);
+    let calls = 0;
+    const g = new Function("fetch", "setTimeout", `${scoreSrc}; return fetchStocks;`)(async (u, o) => { calls++; assert.strictEqual(o && o.method, "GET", "bakgrundsmotorn kräver method"); return yahoo(u); }, (fn) => fn());
+    const r = await g("https://yahoo.test", { retryWait: 0 });
+    assert.strictEqual(r.items.length, 301);
+    assert.deepStrictEqual(r.failed, [S.STOCKS[5][0]]);
+    assert.ok(r.index && r.index.id === "^OMX");
+    assert.ok(calls < 60, `${calls} anrop`);
+    missing = new Set();
+  });
+
   console.log("Bakgrundskörning");
   function makeRunner(responder) {
     const kv = {}, handlers = {}, sent = [];
@@ -136,6 +196,7 @@ const scoreOf = (trend, vol) => { const { daily, s7 } = series(trend, vol); retu
   const ids = ["bitcoin", "ethereum", "solana", "cardano", "near", "sui", "aave", "arweave", "cosmos", "tezos", "iota", "kaspa"];
   const binanceToId = Object.fromEntries(Object.entries(S.BINANCE).map(([id, sym]) => [sym, id]));
   const responder = (url) => {
+    if (url.includes("finance/spark")) return yahoo(url);
     const b = url.match(/klines\?symbol=([A-Z0-9]+)/);
     if (b) { const { daily } = series(trends[binanceToId[b[1]]] || "flat"); return ok([...daily, daily[89]].map((p, i) => [i * 864e5, p, p, p, String(p)])); }
     const m = url.match(/coins\/([^/]+)\/market_chart/);
@@ -230,6 +291,40 @@ const scoreOf = (trend, vol) => { const { daily, s7 } = series(trend, vol); retu
     assert.strictEqual(s.source, "binance");
     assert.ok(s.coins >= 60, `${s.coins} mynt med fullständigt värde`);
   });
+  await test("aktie som går in i extrem rädsla ger en aktienotis, högst en per 12 timmar", async () => {
+    const r8 = makeRunner(responder);
+    trends = {}; stockTrends = {};
+    let s = await r8.run("checkSentiment", { stocks: true });
+    assert.strictEqual(s.stocks.stocks, 302);
+    assert.strictEqual(s.stocks.sent, 0, "första körningen är utgångsläge");
+    stockTrends = { "VOLV-B.ST": "down" };
+    s = await r8.run("checkSentiment", { stocks: true });
+    assert.strictEqual(s.stocks.sent, 1);
+    assert.match(r8.sent.at(-1).title, /^Aktien Volvo B är i extrem rädsla/);
+    assert.match(r8.sent.at(-1).body, /Large Cap/);
+    stockTrends = {}; await r8.run("checkSentiment", { stocks: true });
+    stockTrends = { "VOLV-B.ST": "down" };
+    assert.strictEqual((await r8.run("checkSentiment", { stocks: true })).stocks.sent, 0);
+  });
+  await test("aktienotiser kan stängas av separat från kryptonotiser", async () => {
+    const r9 = makeRunner(responder);
+    trends = {}; stockTrends = {};
+    await r9.run("checkSentiment", { stocks: true });
+    await r9.run("setNotify", { on: false, kind: "stocks" });
+    stockTrends = { "SAAB-B.ST": "down" };
+    assert.strictEqual((await r9.run("checkSentiment", { stocks: true })).stocks.sent, 0);
+    const st = await r9.run("getStatus", {});
+    assert.strictEqual(st.notifyStocks, false);
+    assert.strictEqual(st.notify, true);
+    assert.ok(st.stockStatus && st.stockStatus.stocks === 302);
+  });
+  await test("Yahoo nere ger felstatus för aktier men kryptokontrollen fungerar", async () => {
+    const r10 = makeRunner((url) => url.includes("finance/spark") ? { ok: false, status: 503 } : responder(url));
+    trends = {};
+    const s = await r10.run("checkSentiment", { stocks: true });
+    assert.ok(s.coins > 0);
+    assert.match(s.stocks.error, /503/);
+  });
   await test("historik delas med appen åt båda hållen, nyast vinner", async () => {
     const r5 = makeRunner(responder);
     const now = Date.now();
@@ -244,6 +339,14 @@ const scoreOf = (trend, vol) => { const { daily, s7 } = series(trend, vol); retu
   });
 
   console.log("Kalibrering mot officiellt index");
+  const stockCache = path.join(__dirname, ".cache", "spy-fear-greed.csv");
+  if (fs.existsSync(stockCache) || process.argv.includes("--live")) {
+    await test("S&P 500: korrelation minst 0,80 och medelavvikelse under 11 mot CNN (korsvaliderat)", async () => {
+      const log = console.log; console.log = () => {};
+      const r = await require("./backtest-stocks.js").run().finally(() => { console.log = log; });
+      assert.ok(r.cv.corr >= 0.8 && r.cv.mae < 11, `korrelation ${r.cv.corr.toFixed(2)}, medelavvikelse ${r.cv.mae.toFixed(1)}`);
+    });
+  } else console.log("  hoppar över aktier (kör npm run backtest:stocks först)");
   const cache = path.join(__dirname, ".cache", "btc.json");
   if (fs.existsSync(cache) || process.argv.includes("--live")) {
     await test("Bitcoin: korrelation minst 0,85 och medelavvikelse under 10 mot alternative.me", async () => {
